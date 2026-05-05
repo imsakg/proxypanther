@@ -387,26 +387,49 @@ class ProxySiteController extends Controller
     private function normalizeAdvancedRoutes(array $routes): array
     {
         return collect($routes)
-            ->filter(fn ($route) => \is_array($route) && ! empty($route['upstream_url']))
+            ->filter(fn ($route) => \is_array($route) && $this->isRenderableAdvancedRoute($route))
             ->map(function ($route) {
                 $matcherType = (string) ($route['matcher_type'] ?? 'path');
                 $transport = (string) ($route['transport'] ?? 'http');
+                $action = (string) ($route['action'] ?? 'reverse_proxy');
+                $action = in_array($action, ['reverse_proxy', 'respond'], true) ? $action : 'reverse_proxy';
 
-                return [
+                $normalized = [
                     'name' => (string) ($route['name'] ?? ''),
                     'priority' => (int) ($route['priority'] ?? 100),
                     'matcher_type' => in_array($matcherType, ['path', 'path_prefix', 'header'], true) ? $matcherType : 'path',
                     'matcher_value' => $route['matcher_value'] ?? '/*',
+                    'action' => $action,
+                    'is_active' => (bool) ($route['is_active'] ?? true),
+                ];
+
+                if ($action === 'respond') {
+                    $status = (int) ($route['respond_status'] ?? 200);
+                    $normalized['respond_body'] = (string) ($route['respond_body'] ?? '');
+                    $normalized['respond_status'] = $status >= 100 && $status <= 599 ? $status : 200;
+
+                    return $normalized;
+                }
+
+                return $normalized + [
                     'upstream_url' => (string) $route['upstream_url'],
                     'transport' => in_array($transport, ['http', 'https', 'h2c', 'https_skip_verify'], true) ? $transport : 'http',
                     'preserve_host' => (bool) ($route['preserve_host'] ?? false),
                     'header_up' => \is_array($route['header_up'] ?? null) ? $route['header_up'] : [],
-                    'is_active' => (bool) ($route['is_active'] ?? true),
                 ];
             })
             ->sortBy('priority')
             ->values()
             ->all();
+    }
+
+    private function isRenderableAdvancedRoute(array $route): bool
+    {
+        if (($route['action'] ?? 'reverse_proxy') === 'respond') {
+            return array_key_exists('respond_body', $route) || array_key_exists('respond_status', $route);
+        }
+
+        return ! empty($route['upstream_url']);
     }
 
     private function normalizeForwardAuth(array $config): array
